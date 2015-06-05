@@ -97,22 +97,22 @@ var FtpDeployer = function () {
 	function ftpPut(partialFilePath, cb) {
         var remoteFilePath = remoteRoot + "/" + partialFilePath;
         remoteFilePath = remoteFilePath.replace(/\\/g, '/');
-        
+
         var fullLocalPath = path.join(localRoot, partialFilePath);
-        
+
         var emitData = {
             totalFileCount: partialFilePaths.length,
             transferredFileCount: transferredFileCount,
             percentComplete: Math.round((transferredFileCount / partialFilePaths.length) * 100),
             filename: partialFilePath
         };
-        
+
 		thisDeployer.emit('uploading', emitData);
-		
+
 		ftp.put(fullLocalPath, remoteFilePath, function (err) {
 			if (err) {
 				emitData.err = err;
-				thisDeployer.emit('error', emitData); // error event from 0.5.x TODO: either expand error events or remove this
+				// thisDeployer.emit('error', emitData); // error event from 0.5.x TODO: either expand error events or remove this
                 thisDeployer.emit('upload-error', emitData);
                 if (continueOnError) {
 					cb();
@@ -123,11 +123,11 @@ var FtpDeployer = function () {
 				transferredFileCount++;
 				emitData.transferredFileCount = transferredFileCount;
 				thisDeployer.emit('uploaded', emitData);
-				cb();
+				setTimeout( cb, 500); // Windows was having problems when multiple files were uploading after each other...
 			}
 		});
 	}
-    
+
     function ftpMakeDirectoriesIfNeeded (cb) {
         async.eachSeries(partialDirectories, ftpMakeRemoteDirectoryIfNeeded, function (err) {
             cb(err);
@@ -138,12 +138,12 @@ var FtpDeployer = function () {
     function ftpMakeRemoteDirectoryIfNeeded(partialRemoteDirectory, cb) {
         // add the remote root, and clean up the slashes
         var fullRemoteDirectory = remoteRoot + '/' + partialRemoteDirectory.replace(/\\/gi, '/');
-        
+
         // add leading slash if it is missing
         if (fullRemoteDirectory.charAt(0) !== '/') {
             fullRemoteDirectory = '/' + fullRemoteDirectory;
         }
-        
+
         // remove double // if present
         fullRemoteDirectory = fullRemoteDirectory.replace(/\/\//g, "/");
         ftp.raw.cwd(fullRemoteDirectory, function(err) {
@@ -161,7 +161,7 @@ var FtpDeployer = function () {
         });
     }
 
-    
+
 	this.deploy = function (config, cb) {
         // Prompt for password if none was given
         if (!config.password) {
@@ -179,8 +179,14 @@ var FtpDeployer = function () {
         // Init
         ftp = new Ftp({
             host: config.host,
-            port: config.port
+            port: config.port,
+			debugMode: config.debugMode || false		// Added potential for debugMode
         });
+
+		ftp.on('jsftp_debug', function(eventType, data) {
+			console.log('DEBUG: ', eventType);
+			console.log(JSON.stringify(data, null, 2));
+			});
 
         localRoot = config.localRoot;
         remoteRoot = config.remoteRoot;
@@ -189,7 +195,7 @@ var FtpDeployer = function () {
 
         ftp.useList = true;
         toTransfer = dirParseSync(localRoot);
-        
+
         // Authentication and main processing of files
         ftp.auth(config.username, config.password, function (err) {
             if (err) {
@@ -200,7 +206,7 @@ var FtpDeployer = function () {
                         // if there was an error creating a remote directory we can't continue to upload files
                         cb(err);
                     } else {
-                        async.eachSeries(partialFilePaths, ftpPut, function (err) {
+                        async.eachLimit(partialFilePaths, 1, ftpPut, function (err) { //changed from eachSeries to eachLimit
                             if (err) {
                                 cb(err);
                             } else {
